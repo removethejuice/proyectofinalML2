@@ -38,9 +38,22 @@ def get_hand_landmarks(directory, hands, output_csv="hand_landmarks.csv"):
         writer.writerows(data)
     
     print(f"CSV guardado como {output_csv}")
-    
+
+def get_y_values(filepath, output_csv):
+    input_csv = f"hand_landmarks\\{filepath}\\_classes.csv"
+    df = pd.read_csv(input_csv)
+    df = df.sort_values("filename").reset_index(drop=True)
+    class_columns = df.columns[1:]
+    def get_y_value(row):
+        for col in class_columns:
+            if row[col] == 1:
+                return col
+        return None  
+    df["y_value"] = df.apply(get_y_value, axis=1)
+    df[["filename", "y_value"]].to_csv(output_csv, index=False)
+    print(f"Archivo 'y_values_{filepath}.csv' generado correctamente.")
+
 def main():
-    directory = 'test'
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
         static_image_mode=False,
@@ -49,9 +62,14 @@ def main():
         min_tracking_confidence=0.8
     )
 
-    get_hand_landmarks(directory, hands)
+    get_hand_landmarks('test', hands, "landmarks_test.csv")
+    get_hand_landmarks('train', hands, "landmarks_train.csv")
+    get_hand_landmarks('valid', hands, "landmarks_valid.csv")
     hands.close()
     mp_hands.solutions.drawing_utils.DrawingSpec().close()
+    get_y_values('test', "y_values_test.csv")
+    get_y_values('train', "y_values_train.csv")
+    get_y_values('valid', "y_values_valid.csv")
 
 if __name__ == '__main__':
     main()
