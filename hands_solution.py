@@ -1,63 +1,139 @@
-# REQUIREMENTS:
-# pip install mediapipe opencv-python scikit-learn joblib
-
 import cv2
 import mediapipe as mp
-import joblib
 import numpy as np
+import joblib
+import tkinter as tk
+from tkinter import ttk, filedialog
+from PIL import Image, ImageTk
+import time
 
-# Cargar modelo y scaler
+# Cargar modelo y scaler, aca literal solo cargamos los modelos
 mlp = joblib.load("mlp_model.pkl")
 scaler = joblib.load("scaler.pkl")
 
-# Inicializar MediaPipe
+# Variables de control, estas variables determinan cuando se envia los frames al modelo
+ultimo_registro = None
+frames_desde_ultimo = 0
+cooldown_frames = 20
+current_max_hands = 2
+
+# GUI setup esta parte me daba error
+root = tk.Tk()
+root.title("Reconocimiento de señas")
+root.geometry("900x700")
+
+max_hands_var = tk.IntVar(value=current_max_hands)
+
+# Captura de video esta parte debe ir antes de crear la GUI
+cap = cv2.VideoCapture(0)
+time.sleep(1)
+if not cap.isOpened():
+    print("No se pudo abrir la camara!!!!")
+    exit()
+
+# Widgets de GUI, esta parte de GUI me daba error asi que Chatsito me quito los errores odio programar GUI gracias a dios no estudie sistemas porque no podria sobrevivir un trabajo en frontend preferirira ser un campesino medieval
+video_label = tk.Label(root)
+video_label.pack(pady=10)
+
+config_frame = ttk.Frame(root)
+config_frame.pack()
+ttk.Label(config_frame, text="Máx. manos:").pack(side="left")
+ttk.Spinbox(config_frame, from_=1, to=2, textvariable=max_hands_var, width=5).pack(side="left")
+
+text_frame = ttk.Frame(root)
+text_frame.pack(pady=10, fill="both", expand=True)
+scrollbar = ttk.Scrollbar(text_frame)
+scrollbar.pack(side="right", fill="y")
+text_box = tk.Text(text_frame, height=8, font=("Arial", 14), wrap="word", yscrollcommand=scrollbar.set)
+text_box.pack(side="left", fill="both", expand=True)
+scrollbar.config(command=text_box.yview)
+
+def guardar():
+    texto = text_box.get("1.0", tk.END)
+    ruta = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Texto", "*.txt")])
+    if ruta:
+        with open(ruta, "w", encoding="utf-8") as f:
+            f.write(texto.strip())
+
+def borrar():
+    text_box.delete("1.0", tk.END)
+
+btn_frame = ttk.Frame(root)
+btn_frame.pack(pady=10)
+ttk.Button(btn_frame, text="Guardar texto", command=guardar).pack(side="left", padx=5)
+ttk.Button(btn_frame, text="Borrar texto", command=borrar).pack(side="left", padx=5)
+
+# MediaPipe setup, esto es lo que estaba antes, solo agregamos el GUI encima de esto
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     static_image_mode=False,
-    max_num_hands=2,  # una mano por predicción
+    max_num_hands=max_hands_var.get(),# este codigo se encarga de poner el maximo de manos que se pueden detectar
     min_detection_confidence=0.8,
     min_tracking_confidence=0.8
 )
 mp_drawing = mp.solutions.drawing_utils
 
-# Captura de video
-video_capture = cv2.VideoCapture(0)
+# Loop de video, se me habia olvidado que habia que poner todo en un loop para que se actualice la imagen de la camara y se procese el modelo, esto es lo que hace que la camara funcione en tiempo real
+def update():
+    global hands, ultimo_registro, frames_desde_ultimo, current_max_hands
 
-while True:
-    success, image = video_capture.read()
-    if not success:
-        continue
+    try:
+        # Si cambia el numero de manos se reinicia 
+        if max_hands_var.get() != current_max_hands:
+            current_max_hands = max_hands_var.get()
+            hands.close()
+            hands = mp_hands.Hands(
+                static_image_mode=False,
+                max_num_hands=current_max_hands,
+                min_detection_confidence=0.8,
+                min_tracking_confidence=0.8
+            )
 
-    img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = hands.process(img_rgb)
+        ret, frame = cap.read()
+        if not ret:
+            print("No se pudo capturar frame")
+            root.after(10, update)
+            return
 
-    prediction_label = ""
+        image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = hands.process(image_rgb)
+        pred = ""
 
-    if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
-            mp_drawing.draw_landmarks(
-                image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+        if results.multi_hand_landmarks:
+            for hand in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS)
+                coords = []
+                for lm in hand.landmark:
+                    coords.extend([lm.x, lm.y, lm.z])
+                if len(coords) == 63:
+                    arr = np.array(coords).reshape(1, -1)
+                    scaled = scaler.transform(arr)
+                    pred = mlp.predict(scaled)[0]
 
-            # Extraer coordenadas x, y, z de los 21 puntos
-            landmarks = []
-            for landmark in hand_landmarks.landmark:
-                landmarks.extend([landmark.x, landmark.y, landmark.z])
+        if pred:
+            cv2.putText(frame, f"{pred}", (10, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            if pred != ultimo_registro and frames_desde_ultimo >= cooldown_frames:
+                text_box.insert(tk.END, pred)
+                text_box.see(tk.END)
+                ultimo_registro = pred
+                frames_desde_ultimo = 0
+            else:
+                frames_desde_ultimo += 1
+        else:
+            frames_desde_ultimo += 1
 
-            # Asegurar que tiene 63 features
-            if len(landmarks) == 63:
-                landmarks_np = np.array(landmarks).reshape(1, -1)
-                landmarks_scaled = scaler.transform(landmarks_np)
-                prediction = mlp.predict(landmarks_scaled)
-                prediction_label = prediction[0]
+        img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        imgtk = ImageTk.PhotoImage(Image.fromarray(img))
+        video_label.imgtk = imgtk
+        video_label.config(image=imgtk)
 
-    # Mostrar resultado en pantalla
-    if prediction_label:
-        cv2.putText(image, f"Prediccion: {prediction_label}",
-                    (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    except Exception as e:
+        print("Error:", e)
 
-    cv2.imshow('MediaPipe Hands - Predicción', image)
-    if cv2.waitKey(1) & 0xFF == 27:  # ESC para salir
-        break
+    root.after(10, update)
 
-video_capture.release()
-cv2.destroyAllWindows()
+# Inicia la ventana de la GUI y el loop de video
+update()
+root.protocol("WM_DELETE_WINDOW", lambda: (cap.release(), hands.close(), root.destroy()))
+root.mainloop()
