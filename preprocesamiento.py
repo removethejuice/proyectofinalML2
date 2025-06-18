@@ -46,7 +46,7 @@ def get_y_values(filepath, output_csv):
     class_columns = df.columns[1:]
     def get_y_value(row):
         for col in class_columns:
-            if row[col] == 1:
+            if row[col] == 1 and len(col) !=2:
                 return col
         return None  
     df["y_value"] = df.apply(get_y_value, axis=1)
@@ -65,11 +65,14 @@ def main():
     get_hand_landmarks('test', hands, "landmarks_test.csv")
     get_hand_landmarks('train', hands, "landmarks_train.csv")
     get_hand_landmarks('valid', hands, "landmarks_valid.csv")
-    hands.close()
-    mp_hands.solutions.drawing_utils.DrawingSpec().close()
+
+    
     get_y_values('test', "y_values_test.csv")
     get_y_values('train', "y_values_train.csv")
     get_y_values('valid', "y_values_valid.csv")
+
+    hands.close()
+    mp_hands.solutions.drawing_utils.DrawingSpec().close()
 
 if __name__ == '__main__':
     main()
