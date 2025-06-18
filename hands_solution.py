@@ -14,7 +14,7 @@ scaler = joblib.load("scaler.pkl")
 # Variables de control, estas variables determinan cuando se envia los frames al modelo
 ultimo_registro = None
 frames_desde_ultimo = 0
-cooldown_frames = 20
+cooldown_frames = 10
 current_max_hands = 2
 
 # GUI setup esta parte me daba error
@@ -75,7 +75,7 @@ mp_drawing = mp.solutions.drawing_utils
 
 # Loop de video, se me habia olvidado que habia que poner todo en un loop para que se actualice la imagen de la camara y se procese el modelo, esto es lo que hace que la camara funcione en tiempo real
 def update():
-    global hands, ultimo_registro, frames_desde_ultimo, current_max_hands
+    global hands, ultimo_registro, frames_desde_ultimo, current_max_hands, pred, pred_anterior
 
     try:
         # Si cambia el numero de manos se reinicia 
@@ -97,7 +97,8 @@ def update():
 
         image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(image_rgb)
-        pred = ""
+        pred_anterior = pred if 'pred_anterior' in globals() else ""
+        
 
         if results.multi_hand_landmarks:
             for hand in results.multi_hand_landmarks:
@@ -108,20 +109,26 @@ def update():
                 if len(coords) == 63:
                     arr = np.array(coords).reshape(1, -1)
                     scaled = scaler.transform(arr)
+                    if pred != "":
+                        pred_anterior = pred
                     pred = mlp.predict(scaled)[0]
+        else:
+            pred = ""
 
         if pred:
             cv2.putText(frame, f"{pred}", (10, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            if pred != ultimo_registro and frames_desde_ultimo >= cooldown_frames:
+            if frames_desde_ultimo >= cooldown_frames:
                 text_box.insert(tk.END, pred)
                 text_box.see(tk.END)
-                ultimo_registro = pred
                 frames_desde_ultimo = 0
             else:
-                frames_desde_ultimo += 1
-        else:
-            frames_desde_ultimo += 1
+                print(f"pred: {pred}, pred_anterior: {pred_anterior}")
+                if pred == pred_anterior:
+                    frames_desde_ultimo += 1
+                else:
+                    frames_desde_ultimo = 0
+        
 
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         imgtk = ImageTk.PhotoImage(Image.fromarray(img))
